@@ -1,0 +1,262 @@
+/* puzzles.js – Puzles y correcciones para "El Archipiélago de las Sombras Luminosas".
+   Se carga con UNA línea antes de </body> en index.html:
+   <script src="puzzles.js"></script>                                              */
+(function () {
+  const $ = id => document.getElementById(id);
+  const shuffle = a => a.map(v => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map(x => x[1]);
+
+  /* ---------- CORRECCIONES ---------- */
+  // 1) Safari/iPad: user-select:none en body impedía escribir en la Bitácora. Y el menú desborda en móvil.
+  const st = document.createElement('style');
+  st.textContent = 'textarea,input{-webkit-user-select:text;user-select:text}nav{max-width:100%;overflow-x:auto}';
+  document.head.appendChild(st);
+
+  // 2) Quitar la nota para desarrolladores que veían los jugadores en Multimedia.
+  const note = [...document.querySelectorAll('#view-media > div')]
+    .find(d => d.textContent.includes('Recursos sugeridos'));
+  if (note) note.remove();
+
+  // 3) Existía "Final A" y "Final C", pero no "Final B".
+  if (typeof storyNodes !== 'undefined' && storyNodes.node_ending_c)
+    storyNodes.node_ending_c.title = 'Final B: La Lección de las Corrientes';
+
+  // 4) El dibujo del Laboratorio se borraba al cambiar de pestaña.
+  const _rc = resizeCanvas;
+  resizeCanvas = function () {
+    if (!canvas || !canvas.parentElement) return;
+    const w = canvas.parentElement.clientWidth, h = canvas.parentElement.clientHeight;
+    if (w && h && canvas.width === w && canvas.height === h) return;
+    _rc();
+  };
+  // 5) Si el cursor sale del lienzo con el clic apretado, el trazo seguía "pegado".
+  $('creature-canvas').addEventListener('mouseleave', () => stopDraw());
+
+  // 6) iOS/Chrome dejan el audio en "suspended" hasta reanudarlo.
+  const _pse = playSoundEffect;
+  playSoundEffect = function (...a) {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    _pse(...a);
+  };
+
+  // 7) "Insignias Desbloqueadas" de la Bitácora nunca se actualizaba.
+  const logged = new Set();
+  function addBadgeLog(n) {
+    if (logged.has(n)) return;
+    const l = $('logbook-badges-list');
+    if (!logged.size) l.innerHTML = '';
+    logged.add(n);
+    const p = document.createElement('p');
+    p.className = 'text-xs text-neon-gold flex items-center gap-2';
+    p.innerHTML = '<i class="fa-solid fa-award"></i>';
+    const s = document.createElement('span');
+    s.textContent = n;
+    p.appendChild(s);
+    l.appendChild(p);
+  }
+  const _ub = unlockBadgeUI;
+  unlockBadgeUI = function (t, s) {
+    _ub(t, s);
+    addBadgeLog(t === 'empathy' ? 'Mirada Profunda' : 'Equilibrio Natural');
+  };
+
+  /* ---------- PESTAÑA Y SECCIÓN DE PUZLES ---------- */
+  const OFF = 'tab-btn px-4 py-2 rounded-xl text-xs sm:text-sm font-bold text-slate-300 hover:text-white hover:bg-ocean-800/60 transition-all duration-300 flex items-center gap-2';
+  const ON = 'tab-btn px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all duration-300 bg-gradient-to-r from-neon-cyan to-neon-blue text-ocean-950 shadow-glow-cyan flex items-center gap-2';
+
+  const tab = document.createElement('button');
+  tab.id = 'btn-tab-puzzles';
+  tab.className = OFF;
+  tab.onclick = () => switchTab('puzzles');
+  tab.innerHTML = '<i class="fa-solid fa-puzzle-piece text-neon-gold"></i> <span>Puzles</span>';
+  $('btn-tab-media').after(tab);
+
+  const card = 'glass-neon-card p-5 rounded-2xl border border-neon-cyan/30 space-y-3';
+  const sec = document.createElement('section');
+  sec.id = 'view-puzzles';
+  sec.className = 'hidden space-y-6';
+  sec.innerHTML = `
+    <div class="glass-neon p-4 rounded-2xl border-l-4 border-l-neon-gold flex items-center justify-between gap-3">
+      <div>
+        <h2 class="font-display font-bold text-xl text-neon-gold flex items-center gap-2"><i class="fa-solid fa-puzzle-piece"></i> Puzles del Archipiélago</h2>
+        <p class="text-sm text-slate-300">Resuelve los tres desafíos del Nautilus II para ganar insignias.</p>
+      </div>
+      <span class="px-3 py-1 rounded-full bg-neon-gold/20 border border-neon-gold text-neon-gold text-xs font-bold"><span id="pz-count">0</span>/3 resueltos</span>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div class="${card}">
+        <h3 class="font-display font-bold text-neon-cyan"><i class="fa-solid fa-lightbulb"></i> 1. Memoria de luces</h3>
+        <p class="text-xs text-slate-300">Repite la secuencia de destellos de las criaturas. Llega a 5 destellos. (Activa “Sonido Marino” para oír las notas.)</p>
+        <div id="pz-mem-pad" class="grid grid-cols-2 gap-3"></div>
+        <p id="pz-mem-status" class="text-xs text-neon-gold min-h-[1rem]"></p>
+        <button id="pz-mem-start" class="px-4 py-2 rounded-xl bg-gradient-to-r from-neon-cyan to-neon-blue text-ocean-950 font-bold text-xs">Iniciar</button>
+      </div>
+      <div class="${card}">
+        <h3 class="font-display font-bold text-neon-magenta"><i class="fa-solid fa-link"></i> 2. Criatura y adaptación</h3>
+        <p class="text-xs text-slate-300">Elige una criatura y luego su adaptación (usa el Bestiario si dudas).</p>
+        <div id="pz-match-left" class="space-y-2"></div>
+        <div class="border-t border-ocean-700"></div>
+        <div id="pz-match-right" class="space-y-2"></div>
+      </div>
+      <div class="${card}">
+        <h3 class="font-display font-bold text-neon-lime"><i class="fa-solid fa-list-ol"></i> 3. Rescate del arrecife</h3>
+        <p class="text-xs text-slate-300">Toca los pasos en el orden correcto para limpiar el coral sin dañarlo.</p>
+        <div id="pz-order" class="space-y-2"></div>
+      </div>
+    </div>`;
+  document.querySelector('main').appendChild(sec);
+
+  const _switch = switchTab;
+  switchTab = function (name) {
+    if (name === 'puzzles') {
+      ['story', 'bestiary', 'logbook', 'creator', 'teacher', 'media'].forEach(x => {
+        $('view-' + x).classList.add('hidden');
+        $('btn-tab-' + x).className = OFF;
+      });
+      sec.classList.remove('hidden');
+      tab.className = ON;
+      playSoundEffect(500, 'sine', 0.15);
+      return;
+    }
+    sec.classList.add('hidden');
+    tab.className = OFF;
+    _switch(name);
+  };
+
+  /* ---------- LÓGICA DE LOS PUZLES ---------- */
+  const fin = new Set();
+  function done(k, msg) {
+    if (fin.has(k)) return;
+    fin.add(k);
+    playChime();
+    showToast('Insignia: ' + msg, 'neon-gold');
+    addBadgeLog(msg);
+    $('pz-count').textContent = fin.size;
+    if (fin.size === 3) setTimeout(() => showToast('¡Resolviste todos los puzles!', 'neon-lime'), 900);
+  }
+  const BASE = 'w-full text-left p-3 rounded-xl bg-ocean-950/90 border text-xs transition ';
+  const ST = {
+    idle: BASE + 'border-ocean-700 text-slate-100 hover:border-neon-cyan',
+    sel: BASE + 'border-neon-cyan text-neon-cyan shadow-glow-cyan',
+    ok: BASE + 'border-neon-lime text-neon-lime'
+  };
+  function mk(text, cls) {
+    const b = document.createElement('button');
+    b.className = cls;
+    b.textContent = text;
+    return b;
+  }
+
+  // Puzle 1: memoria de luces
+  const COL = [
+    { c: '#00f5d4', f: 262, n: 'Cian' }, { c: '#7b2cbf', f: 330, n: 'Púrpura' },
+    { c: '#ffd166', f: 392, n: 'Ámbar' }, { c: '#70e000', f: 523, n: 'Verde lima' }
+  ];
+  const M = { seq: [], pos: 0, busy: false, goal: 5 };
+  const pad = $('pz-mem-pad'), ms = $('pz-mem-status');
+  COL.forEach((o, i) => {
+    const b = document.createElement('button');
+    b.className = 'h-20 rounded-2xl border-2 border-white/20 opacity-50 transition active:scale-95';
+    b.style.background = o.c;
+    b.setAttribute('aria-label', o.n);
+    b.onclick = () => press(i);
+    pad.appendChild(b);
+  });
+  function flash(i) {
+    const b = pad.children[i];
+    b.style.opacity = 1;
+    b.style.boxShadow = '0 0 30px ' + COL[i].c;
+    playSoundEffect(COL[i].f, 'sine', 0.25);
+    setTimeout(() => { b.style.opacity = ''; b.style.boxShadow = ''; }, 350);
+  }
+  function next() {
+    M.seq.push(Math.floor(Math.random() * 4));
+    M.pos = 0;
+    M.busy = true;
+    ms.textContent = 'Mira... (' + M.seq.length + '/' + M.goal + ')';
+    M.seq.forEach((s, k) => setTimeout(() => flash(s), 700 + k * 600));
+    setTimeout(() => { M.busy = false; ms.textContent = 'Tu turno'; }, 700 + M.seq.length * 600);
+  }
+  function press(i) {
+    if (M.busy || !M.seq.length) return;
+    flash(i);
+    if (i !== M.seq[M.pos]) { ms.textContent = 'Fallaste. Pulsa Iniciar para reintentar.'; M.seq = []; return; }
+    if (++M.pos === M.seq.length) {
+      if (M.seq.length >= M.goal) { ms.textContent = '¡Lo lograste!'; M.seq = []; done('mem', 'Memoria Luminosa'); }
+      else { M.busy = true; setTimeout(next, 800); }
+    }
+  }
+  $('pz-mem-start').onclick = () => { M.seq = []; next(); };
+
+  // Puzle 2: criatura y adaptación
+  const PAIRS = [
+    ['Sirena del Abismo (Aura)', 'Destellos cortos de luz cian para comunicarse'],
+    ['Guardián del Coral Gris', 'Simbiosis con bacterias luminosas'],
+    ['Medusa Sombrilla de Cristal', 'Filtra plancton y aclara el agua'],
+    ['Camarón Destello Arcoíris', 'Nube luminosa verde para escapar']
+  ];
+  function buildMatch() {
+    const L = $('pz-match-left'), R = $('pz-match-right');
+    L.innerHTML = ''; R.innerHTML = '';
+    let sel = null, hits = 0;
+    PAIRS.forEach((p, i) => {
+      const b = mk(p[0], ST.idle);
+      b.onclick = () => {
+        if (b.dataset.ok) return;
+        [...L.children].forEach(c => { if (!c.dataset.ok) c.className = ST.idle; });
+        sel = i; b.className = ST.sel;
+      };
+      L.appendChild(b);
+    });
+    shuffle(PAIRS.map((p, i) => [p[1], i])).forEach(([t, i]) => {
+      const b = mk(t, ST.idle);
+      b.onclick = () => {
+        if (b.dataset.ok) return;
+        if (sel === null) { showToast('Primero elige una criatura', 'neon-gold'); return; }
+        if (i === sel) {
+          const lb = L.children[sel];
+          b.className = lb.className = ST.ok;
+          b.dataset.ok = lb.dataset.ok = 1;
+          sel = null;
+          playSoundEffect(660, 'sine', 0.2);
+          if (++hits === PAIRS.length) done('par', 'Naturalista Experto');
+        } else {
+          showToast('Esa adaptación no es de esa criatura', 'neon-magenta');
+          L.children[sel].className = ST.idle;
+          sel = null;
+        }
+      };
+      R.appendChild(b);
+    });
+  }
+
+  // Puzle 3: ordenar pasos
+  const STEPS = [
+    'Escanear las corrientes marinas',
+    'Emitir pulsos de luz hacia las microalgas',
+    'Esperar a que el sedimento se disuelva con suavidad',
+    'Comprobar que el coral recupera su color'
+  ];
+  function buildOrder() {
+    const C = $('pz-order');
+    C.innerHTML = '';
+    let n = 0;
+    shuffle(STEPS.map((t, i) => [t, i])).forEach(([t, i]) => {
+      const b = mk(t, ST.idle);
+      b.onclick = () => {
+        if (b.dataset.ok) return;
+        if (i === n) {
+          b.dataset.ok = 1; b.className = ST.ok; b.textContent = (++n) + '. ' + t;
+          playSoundEffect(500 + n * 80, 'sine', 0.2);
+          if (n === STEPS.length) done('orden', 'Restaurador del Arrecife');
+        } else {
+          showToast('Ese paso no va ahora. ¡Reordenamos!', 'neon-magenta');
+          buildOrder();
+        }
+      };
+      C.appendChild(b);
+    });
+  }
+
+  buildMatch();
+  buildOrder();
+})();
